@@ -1,0 +1,10 @@
+Package: com.haoge.ccdarkplayer
+Name: 控制中心深色播放器
+Version: 5.2.0
+Architecture: iphoneos-arm64
+Description: 强制控制中心播放器使用深色模式
+Maintainer: haoge
+Author: haoge
+Section: Haoge-Tweaks
+Depends: firmware (>= 16.0), mobilesubstrate | ellekit
+Tag: role::enduser, purpose::extension, cydia::requires-respring

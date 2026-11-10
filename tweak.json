@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "CCDarkPlayer",
+  "id": "ccdarkplayer",
+  "display_name": "控制中心深色播放器",
+  "class_prefix": "HaogeCCDarkPlayer",
+  "symbol_prefix": "haoge_ccdarkplayer",
+  "package": "com.haoge.ccdarkplayer",
+  "bundle": "com.apple.springboard",
+  "sdk_version": "16.5",
+  "minimum_ios": "16.0",
+  "preferences": false,
+  "slider": false,
+  "github_actions": true
+}
