@@ -1,107 +1,75 @@
 name: Build CCDarkPlayer
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: Package scheme
+        type: choice
+        options: [rootless, roothide]
+        default: rootless
 
 permissions:
   contents: write
 
-env:
-  THEOS: ${{ github.workspace }}/theos-roothide
-
 jobs:
   build:
-    name: Build (${{ matrix.build_variant }})
-    runs-on: ubuntu-latest
-    outputs:
-      package_version: ${{ steps.bump.outputs.package_version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - build_variant: rootless
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      THEOS: ${{ github.workspace }}/.theos-ci
+      THEOS_PACKAGE_SCHEME: ${{ github.event_name == 'workflow_dispatch' && inputs.scheme || 'rootless' }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Environment
+      - name: Select Xcode and install host tools
         run: |
-          echo "$THEOS/bin" >> "$GITHUB_PATH"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-          echo "THEOS_IGNORE_PARALLEL_BUILDING_NOTICE=yes" >> "$HOME/.theosrc"
+          xcode-select -p
+          xcrun --find clang
+          brew install dpkg ldid
 
       - name: Bump Package Version
         id: bump
         run: |
           VERSION="5.2.0-${{ github.run_number }}"
           echo "Using version: $VERSION"
-          sed -i "s/^Version: .*/Version: ${VERSION}/" control
+          sed -i '' "s/^Version: .*/Version: ${VERSION}/" control
           echo "package_version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends \
-            git curl ca-certificates dpkg xz-utils make
-          sudo apt-get install -y libxml2-dev 2>/dev/null || \
-            sudo apt-get install -y libxml2 || true
-
-      - name: Checkout Theos (RootHide)
-        uses: actions/checkout@v4
-        with:
-          repository: roothide/theos
-          path: theos-roothide
-          submodules: recursive
-
-      - name: Install Swift Toolchain (Linux)
-        run: |
-          TOOLCHAIN_URL="https://github.com/kabiroberai/swift-toolchain-linux/releases/download/v2.3.0/swift-toolchain-linux.tar.xz"
-          curl -L "$TOOLCHAIN_URL" -o swift-toolchain.tar.xz
-          tar -xJf swift-toolchain.tar.xz -C "$THEOS"
-          echo "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"
-
-      - name: Install iOS SDK (iPhoneOS16.5)
+      - name: Fetch Theos and iOS SDK
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$THEOS/sdks"
-          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
-            echo "iPhoneOS16.5.sdk already present"
-            exit 0
+          if [[ "$THEOS_PACKAGE_SCHEME" == roothide ]]; then
+            git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/roothide/theos.git "$THEOS"
+          else
+            git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/theos/theos.git "$THEOS"
           fi
-          SDK_STAGE="$(mktemp -d)"
-          trap 'rm -rf "$SDK_STAGE"' EXIT
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
-          git -C "$SDK_STAGE/sdks" sparse-checkout set iPhoneOS16.5.sdk
-          cp -r "$SDK_STAGE/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
-          ls -1 "$THEOS/sdks"
-
-      - name: Install ldid
-        run: |
-          curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_aarch64 -o /tmp/ldid 2>/dev/null || \
-          curl -L https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 -o /tmp/ldid
-          chmod +x /tmp/ldid
-          sudo mv /tmp/ldid /usr/local/bin/ldid
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+          git -C "$RUNNER_TEMP/theos-sdks" sparse-checkout set iPhoneOS16.5.sdk
+          cp -a "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
 
       - name: Build Package
+        shell: bash
         run: |
-          sh build.sh "${{ matrix.build_variant }}"
+          set -euo pipefail
+          sh build.sh "$THEOS_PACKAGE_SCHEME"
           echo "=== .deb files ==="
           find ./packages -name "*.deb" -type f
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ matrix.build_variant }}
+          name: packages-${{ env.THEOS_PACKAGE_SCHEME }}
           path: ./packages/*.deb
           if-no-files-found: error
+          retention-days: 14
 
       - name: Create Release
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
