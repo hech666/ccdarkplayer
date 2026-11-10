@@ -1,51 +1,63 @@
 #import <UIKit/UIKit.h>
-#import "HaogeCCDarkPlayerPrivate.h"
 #import <dlfcn.h>
 
-// CCUIRootViewController: iOS 16-17 控制中心根 VC
-// overrideUserInterfaceStyle 设 dark 后，trait 自动向下传递给所有子模块（包括 Now Playing）
-%hook CCUIRootViewController
-
-- (void)viewDidLoad {
-    %orig;
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+// 递归对整棵 VC 子树施加深色，避免子模块自己覆盖回来
+static void CCDPApplyDark(UIViewController *vc) {
+    if (!vc) return;
+    if (vc.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) {
+        vc.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    }
+    for (UIViewController *child in vc.childViewControllers) {
+        CCDPApplyDark(child);
+    }
+    if (vc.presentedViewController) {
+        CCDPApplyDark(vc.presentedViewController);
+    }
 }
+
+// ── 广撒网：凡类名含 CC / NowPlaying / MediaControls / ControlCenter 的 VC
+// 不依赖具体类名，iOS 改内部类名也不受影响
+%hook UIViewController
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-}
-
-- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
-    %orig;
-    if (self.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) {
+    NSString *cn = NSStringFromClass(self.class);
+    if ([cn hasPrefix:@"CC"]
+     || [cn containsString:@"NowPlaying"]
+     || [cn containsString:@"MediaControls"]
+     || [cn containsString:@"ControlCenter"]) {
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     }
 }
 
 %end
 
-// CCUIModuleCollectionViewController: 承载各模块单元格的 VC，也设一遍防止子模块自己覆盖
-%hook CCUIModuleCollectionViewController
+// ── SBControlCenterController 兜底：CC 弹出时递归对整棵 VC 树施加深色
+// _presentForReason:animated: iOS 16+ 实际触发的方法
+// presentAnimated: 旧版本兼容
+%hook SBControlCenterController
 
-- (void)viewDidLoad {
+- (void)_presentForReason:(NSUInteger)reason animated:(BOOL)animated {
     %orig;
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    // 稍微延迟，等 VC hierarchy 搭建完成再覆盖
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        CCDPApplyDark(self.viewController);
+    });
 }
 
-- (void)viewWillAppear:(BOOL)animated {
+- (void)presentAnimated:(BOOL)animated {
     %orig;
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        CCDPApplyDark(self.viewController);
+    });
 }
 
 %end
 
 %ctor {
     @autoreleasepool {
-        // ControlCenterUI.framework 在 SpringBoard 启动时可能尚未加载（懒加载）
-        // dlopen 强制提前加载，确保 Logos %init 时能找到目标类
+        // 强制加载可能懒加载的框架，确保 %init 时类已存在
         dlopen("/System/Library/PrivateFrameworks/ControlCenterUI.framework/ControlCenterUI", RTLD_LAZY);
-        // 必须显式调用 %init，否则所有 %hook 都不会生效
         %init;
     }
 }

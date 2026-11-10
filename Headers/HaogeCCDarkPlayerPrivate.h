@@ -1,14 +1,9 @@
 #pragma once
 #import <UIKit/UIKit.h>
 
-// ControlCenterUI.framework — iOS 16-17
-@interface CCUIRootViewController : UIViewController
-@end
-
-@interface CCUIModuleCollectionViewController : UIViewController
-@end
-
-// SpringBoard
+// SpringBoard — SBControlCenterController
 @interface SBControlCenterController : NSObject
 @property (nonatomic, readonly) UIViewController *viewController;
+- (void)presentAnimated:(BOOL)animated;
+- (void)_presentForReason:(NSUInteger)reason animated:(BOOL)animated;
 @end
